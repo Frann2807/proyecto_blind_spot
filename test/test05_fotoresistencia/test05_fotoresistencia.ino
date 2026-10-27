@@ -2,23 +2,29 @@
 // TEST 05 - FOTORRESISTENCIA (ESP32-C3 Super Mini)
 // - Fotoresistencia (LDR) con divisor resistivo en GPIO1
 //   (ADC1_CH1), alimentado a 3V3.
+// - El divisor es PULL-DOWN: con luz la lectura es ALTA y baja al
+//   oscurecer. Por eso el default es dir = -1 (oscuro si lectura
+//   < umbral).
+// - LED indicador en GPIO7 (con resistencia ~220-330 ohm a GND):
+//   se enciende cuando se detecta OSCURO.
 // - Muestra lectura cruda (0-4095) y mV cada 200 ms y marca
 //   OSCURO segun umbral y direccion configurables por Serial.
 // - Comandos: 'u<valor>' umbral | 'd1' / 'd-1' direccion | help
-//   (1 = oscuro si lectura > umbral, -1 = si lectura < umbral;
-//    depende de como armes el divisor)
 // ============================================================
 #define PIN_FOTO 1
+#define PIN_LED  7   // LED que se enciende al detectar oscuridad
 #define N_MUESTRAS 10
 
 int umbral = 2000;
-int dir = 1;
+int dir = -1;  // LDR pull-down: oscuro si lectura < umbral
 
 void setup() {
   Serial.begin(115200);
   delay(1000);
   analogReadResolution(12);
-  Serial.println("TEST05: FOTORRESISTENCIA (GPIO1)");
+  pinMode(PIN_LED, OUTPUT);
+  digitalWrite(PIN_LED, LOW);
+  Serial.println("TEST05: FOTORRESISTENCIA (GPIO1) + LED (GPIO7)");
   Serial.println("Comandos: u<valor> umbral | d1 / d-1 direccion | help");
 }
 
@@ -62,8 +68,9 @@ void procesarSerial() {
 void loop() {
   int raw = leerFoto();
   bool osc = (dir == 1) ? (raw > umbral) : (raw < umbral);
+  digitalWrite(PIN_LED, osc ? HIGH : LOW);
   Serial.println("FOTO: " + String(raw) + " (" + String(raw * 3300.0f / 4095.0f, 0) + " mV) " +
-                 (osc ? ">>> OSCURO" : "iluminado"));
+                 (osc ? ">>> OSCURO" : "iluminado") + " | LED:" + (osc ? "ON" : "off"));
   procesarSerial();
   delay(150);
 }

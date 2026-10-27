@@ -76,7 +76,7 @@ void setup() {
   WiFi.mode(WIFI_STA);  // para que 'mac' devuelva una MAC valida
   Serial.println("TEST08: BLE (NimBLE NUS)");
 
-  NimBLEDevice::init("TestBLE_BS");
+  NimBLEDevice::init("Jaz_BLE");
   pServer = NimBLEDevice::createServer();
   pServer->setCallbacks(new MyServerCallbacks());
   NimBLEService* pNusService = pServer->createService(NUS_SERVICE_UUID);

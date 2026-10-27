@@ -2,14 +2,15 @@
 // BLIND SPOT - FIRMWARE BASTON (ESP32-C3 Super Mini)
 // Estilo BalancinCyS: BLE (NimBLE NUS) + interprete de comandos.
 //
-// - Sensor IR analogico en GPIO0 (ADC1_CH0): detecta obstaculos
-//   y avisa por ESP-NOW a la muñeca ("obst"/"libre"); repite
-//   "obst" cada cdobs ms mientras el obstaculo siga presente.
+// - Sensor IR analogico en GPIO0 (ADC1_CH0, salida pull-up:
+//   obstaculo = lectura baja): detecta obstaculos y avisa por
+//   ESP-NOW a la muñeca ("obst"/"libre"); repite "obst" cada
+//   cdobs ms mientras el obstaculo siga presente.
 // - Fotoresistencia en GPIO1 (ADC1_CH1): segun los umbrales
 //   enciende LED1 (GPIO5) y LED2 (GPIO6) y avisa por ESP-NOW
 //   "oscuro"/"claro" a la muñeca.
-// - Buzzer ACTIVO en GPIO4: suena cuando la muñeca envia "btn"
-//   (localizador del baston) o "ping".
+// - Buzzer PASIVO en GPIO4: suena con tone() cuando la muñeca
+//   envia "btn" (localizador del baston) o "ping".
 // - BLE para debug inalambrico: los comandos simulan los
 //   mensajes de la muñeca y accionan cada salida, para probar
 //   todo con una sola ESP32-C3.
@@ -28,7 +29,7 @@
 // ==================================================
 #define PIN_IR    0   // sensor IR analogico (ADC1_CH0)
 #define PIN_FOTO  1   // fotoresistencia (ADC1_CH1)
-#define PIN_BUZZ  4   // buzzer activo
+#define PIN_BUZZ  4   // buzzer pasivo (tone/LEDC)
 #define PIN_LED1  5   // LED 1 (oscuridad nivel 1)
 #define PIN_LED2  6   // LED 2 (oscuridad nivel 2)
 
@@ -61,13 +62,14 @@ const char* NVS_NAMESPACE = "baston";
 // ==================================================
 // == PARAMETROS CALIBRABLES (por BLE, con 'guardar') ==
 // ==================================================
-volatile int umbral = 2500;  // IR: lectura que dispara obstaculo
-volatile int dirir   = 1;    // 1: obstaculo si IR > umbral | -1: si IR < umbral
-volatile int luz1    = 2000; // foto: umbral del LED1
-volatile int luz2    = 3000; // foto: umbral del LED2
-volatile int fdir    = 1;    // 1: oscuro si foto > umbral | -1: si foto < umbral
+volatile int umbral = 3800;  // IR: lectura que dispara obstaculo (< umbral = obstaculo)
+volatile int dirir   = -1;   // sensor pull-up: obstaculo si IR < umbral | 1: si IR > umbral
+volatile int luz1    = 3000; // foto: umbral LED1 (empieza a oscurecer)
+volatile int luz2    = 2000; // foto: umbral LED2 (muy oscuro)
+volatile int fdir    = -1;   // LDR pull-down: oscuro si foto < umbral | 1: si foto > umbral
 volatile int cdobs   = 500;  // ms minimos entre envios de "obst"
 volatile int nprom   = 10;   // muestras promediadas por lectura
+volatile int freq    = 2500; // Hz del buzzer pasivo (beeps)
 
 // Control de LEDs
 volatile int ledOverride = 1;  // 1 = automatico (umbrales), 0 = manual
@@ -148,13 +150,14 @@ void setup() {
     fdir   = prefs.getInt("fdir", fdir);
     cdobs  = prefs.getInt("cdobs", cdobs);
     nprom  = prefs.getInt("nprom", nprom);
+    freq   = prefs.getInt("freq", freq);
     Serial.println("Parametros restaurados desde flash.");
   }
   prefs.end();
 
   // Salidas
   pinMode(PIN_BUZZ, OUTPUT);
-  digitalWrite(PIN_BUZZ, LOW);
+  noTone(PIN_BUZZ);
   pinMode(PIN_LED1, OUTPUT);
   pinMode(PIN_LED2, OUTPUT);
   digitalWrite(PIN_LED1, LOW);
@@ -327,12 +330,12 @@ int leerFoto() {
 }
 
 // ==================================================
-// == BUZZER ACTIVO ==
+// == BUZZER PASIVO (tone/LEDC) ==
 // ==================================================
 void beep(int onMs) {
-  digitalWrite(PIN_BUZZ, HIGH);
+  tone(PIN_BUZZ, freq, onMs);
   delay(onMs);
-  digitalWrite(PIN_BUZZ, LOW);
+  noTone(PIN_BUZZ);
 }
 
 void sonarPatron(int veces, int onMs, int offMs) {
@@ -412,7 +415,7 @@ void comandProcess(String cmd) {
   }
   if (nombre == "buzz") {
     int ms = (valorStr.length() > 0) ? (int)valor : 500;
-    btPrintln("Buzzer " + String(ms) + " ms");
+    btPrintln("Buzzer " + String(ms) + " ms @" + String(freq) + " Hz");
     beep(ms);
     return;
   }
@@ -458,6 +461,7 @@ void comandProcess(String cmd) {
     prefs.putInt("fdir", fdir);
     prefs.putInt("cdobs", cdobs);
     prefs.putInt("nprom", nprom);
+    prefs.putInt("freq", freq);
     prefs.end();
     btPrintln("Guardado en flash.");
     return;
@@ -475,6 +479,7 @@ void comandProcess(String cmd) {
   else if (nombre == "fdir") fdir = (valor >= 0) ? 1 : -1;
   else if (nombre == "cdobs") cdobs = constrain((int)valor, 0, 10000);
   else if (nombre == "nprom") nprom = constrain((int)valor, 1, 50);
+  else if (nombre == "freq") freq = constrain((int)valor, 100, 20000);
   else {
     btPrintln("Comando no reconocido. Escribir 'help'.");
     return;
@@ -485,7 +490,7 @@ void comandProcess(String cmd) {
 void mostrarAyuda() {
   btPrintln("ACCIONES: buzz led1 led2 auto ir foto stream simmuneca mac mostrar guardar help");
   btPrintln("simmuneca: <btn|ping> (simula mensaje de la muñeca)");
-  btPrintln("IR: umbral dirir cdobs nprom | FOTO: luz1 luz2 fdir");
+  btPrintln("IR: umbral dirir cdobs nprom | FOTO: luz1 luz2 fdir | BUZZER: freq");
 }
 
 void mostrarValores() {
@@ -493,6 +498,7 @@ void mostrarValores() {
   btPrintln("umbral=" + String(umbral) + " dirir=" + String(dirir) +
             " cdobs=" + String(cdobs) + " nprom=" + String(nprom));
   btPrintln("luz1=" + String(luz1) + " luz2=" + String(luz2) + " fdir=" + String(fdir));
+  btPrintln("freq=" + String(freq));
   btPrintln("ledOverride=" + String(ledOverride) + " manLed1=" + String(manLed1) +
             " manLed2=" + String(manLed2) + " stream=" + String(stream));
   btPrintln("===================");

@@ -9,7 +9,7 @@ del firmware `balancin` de ProyectoCyS (BLE + intérprete de comandos).
 - **Muñeca** (`firmware/muneca`): pulsador en GPIO3 -> envía `"btn"` por
   ESP-NOW; vibrador por transistor en GPIO10 cuando el bastón avisa.
 - **Bastón** (`firmware/baston`): sensor IR GPIO0, fotoresistencia GPIO1,
-  LEDs GPIO5/6 y buzzer activo GPIO4. Responde al `"btn"` de la muñeca
+  LEDs GPIO5/6 y buzzer pasivo GPIO4. Responde al `"btn"` de la muñeca
   con el buzzer (localizador) y avisa obstáculos/oscuridad a la muñeca.
 
 ## Mapa de pines (sin conflictos: todo puede convivir en UNA sola ESP)
@@ -18,15 +18,20 @@ del firmware `balancin` de ProyectoCyS (BLE + intérprete de comandos).
 |------|-----------------|---------------------------------------|------|
 | GPIO0  | Bastón | Sensor IR analógico (ADC1_CH0)        | entrada analógica |
 | GPIO1  | Bastón | Fotoresistencia (ADC1_CH1)            | entrada analógica |
-| GPIO3  | Muñeca | **Pulsador** (botón entre 3V3 y GPIO3, pulldown interno) | INPUT_PULLDOWN |
-| GPIO4  | Bastón | **Buzzer activo**                     | salida |
+| GPIO3  | Muñeca | **Pulsador** (botón entre GPIO3 y GND, pullup interno) | INPUT_PULLUP |
+| GPIO4  | Bastón | **Buzzer pasivo** (tone/LEDC)         | salida |
 | GPIO5  | Bastón | LED 1 (oscuridad nivel 1)             | salida |
 | GPIO6  | Bastón | LED 2 (oscuridad nivel 2)             | salida |
+| GPIO7  | Test 05 | LED indicador de oscuridad (con el LDR) | salida |
 | GPIO10 | Muñeca | Transistor -> motor vibrador          | salida (PWM) |
+| GPIO20 | Test 09 | HC-SR04 TRIG                         | salida |
+| GPIO21 | Test 09 | HC-SR04 ECHO (divisor 5V->3V3)       | entrada |
 
-Recomendaciones: GPIO3 para el pulsador (el C3 tiene pulldown interno en
-todos los GPIO) y GPIO4 para el buzzer. Se evitan GPIO2/8/9 (strapping) y
-GPIO20/21 (UART), y GPIO8 suele ser el LED onboard.
+Recomendaciones: GPIO3 para el pulsador (con pullup interno: el pulldown
+dio problemas en la práctica) y GPIO4 para el buzzer. Se evitan GPIO2/8/9
+(strapping) y GPIO20/21 (UART), y GPIO8 suele ser el LED onboard.
+Pines libres: **GPIO2, GPIO8, GPIO9** (strapping: evitar salvo
+necesidad).
 
 ## Protocolo ESP-NOW
 
@@ -57,12 +62,13 @@ test/         (cada test prueba UNA cosa; todos usan pines distintos
                de los de arriba, así que pueden probarse en la misma ESP)
   test01_boton/           pulsador GPIO3
   test02_transistor/      transistor/vibrador GPIO10
-  test03_buzzer/          buzzer activo GPIO4
+  test03_buzzer/          buzzer pasivo GPIO4 (Jingle Bells)
   test04_sensor_ir/       sensor IR GPIO0
-  test05_fotoresistencia/ LDR GPIO1
+  test05_fotoresistencia/ LDR GPIO1 + LED de oscuridad GPIO7
   test06_leds/            LEDs GPIO5/6
   test07_espnow/          ESP-NOW broadcast (ping cada 5 s)
   test08_ble/             BLE NUS con ECO
+  test09_ultrasonido/     HC-SR04 con filtros (TRIG=GPIO20, ECHO=GPIO21)
 ```
 
 > `espnow_cb.h` está duplicado a propósito en cada carpeta: el IDE de
@@ -87,7 +93,9 @@ Los firmwares traen comandos que **simulan las acciones a distancia**:
    dispositivo `BastonBS`, enviar con `\n`):
    - `simmuneca btn` -> buzzer de localización (lo mismo que recibir el botón de la muñeca).
    - `buzz 500`, `led1 1`, `led2 1`, `auto`, `ir`, `foto`, `stream 1`.
-   - Ajustar umbrales reales: `umbral 2500`, `dirir 1`, `luz1 2000`, `luz2 3000`, `fdir 1`, `guardar`.
+   - Ajustar umbrales reales: `umbral 3800`, `dirir -1` (sensor IR
+     pull-up: obstáculo = lectura baja), `luz1 3000`, `luz2 2000`,
+     `fdir -1` (LDR pull-down: oscuro = lectura baja), `guardar`.
 2. **Probar la muñeca** (una sola placa): flashear `firmware/muneca`
    (dispositivo `MunecaBS`):
    - `btn` -> envía `"btn"` (simula pulsación), `ping`, `vibra 3`.
@@ -114,23 +122,32 @@ Los firmwares traen comandos que **simulan las acciones a distancia**:
 | Comando | Descripción |
 |---|---|
 | `help` / `mostrar` | ayuda y valores actuales |
-| `buzz [ms]` | prueba el buzzer (default 500 ms) |
+| `buzz [ms]` | prueba el buzzer a la frecuencia `freq` (default 500 ms) |
 | `led1 0/1`, `led2 0/1`, `auto` | LEDs manuales o automáticos por umbrales |
 | `ir` / `foto` | lectura única de cada sensor |
 | `stream 0/1` | stream de sensores cada 250 ms por BLE |
 | `simmuneca <btn\|ping>` | simula mensaje entrante de la muñeca |
 | `umbral N`, `dirir 1/-1`, `cdobs N`, `nprom N` | configuración del sensor IR |
 | `luz1 N`, `luz2 N`, `fdir 1/-1` | configuración de la fotoresistencia |
+| `freq N` | frecuencia (Hz) de los beeps del buzzer pasivo |
 | `guardar` / `mac` | persistir en flash / mostrar MAC |
 
 ## Notas de hardware
 
-- **Pulsador**: entre 3V3 y GPIO3; el pulldown interno mantiene LOW en
-  reposo (presionado = HIGH).
+- **Pulsador**: entre GPIO3 y GND; el pullup interno mantiene HIGH en
+  reposo (presionado = LOW).
 - **Transistor/motor vibrador**: NPN o MOSFET en GPIO10 (PWM 0-255).
   Si es un motor, agregar diodo flyback en paralelo.
-- **Buzzer activo**: usar un módulo con driver o un transistor; no
-  colgar más de ~20 mA directamente del GPIO.
+- **HC-SR04 (test 09)**: VCC directo a la batería (3.7–4.2V: funciona,
+  con algo menos de alcance que a 5V), TRIG a GPIO20 directo (la lógica
+  3V3 alcanza) y ECHO a GPIO21 con divisor: **R1 = 1k entre ECHO y
+  GPIO21, R2 = 3k entre GPIO21 y GND** (4.2V -> 3.15V, 3.7V -> 2.78V).
+  Nunca conectar el ECHO directo al GPIO.
+- **Buzzer pasivo**: usar un módulo con transistor (o directo con
+  resistencia en serie); se maneja con `tone()`/LEDC. La frecuencia de
+  los beeps se configura con `freq N`.
 - **Sensor IR y LDR**: divisores alimentados a 3V3; las lecturas van de
-  0 a 4095. La dirección de los umbrales (`dirir`, `fdir`) se calibra
+  0 a 4095. El sensor IR es pull-up (obstáculo = lectura baja, default
+  `dirir -1`) y la LDR es pull-down (oscuro = lectura baja, default
+  `fdir -1`). La dirección de los umbrales (`dirir`, `fdir`) se calibra
   con los tests 04/05 y se configura por BLE.

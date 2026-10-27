@@ -1,16 +1,18 @@
 // ============================================================
 // TEST 04 - SENSOR INFRARROJO ANALOGICO (ESP32-C3 Super Mini)
 // - Sensor IR analogico en GPIO0 (ADC1_CH0), alimentado a 3V3.
+// - El sensor es PULL-UP: sin obstaculo la salida queda ALTA
+//   (lectura alta, ~4095) y baja al acercarse un obstaculo.
+//   Por eso el default es dir = -1 (obstaculo si lectura < umbral).
 // - Muestra lectura cruda (0-4095) y mV cada 200 ms y marca
 //   OBSTACULO segun umbral y direccion configurables por Serial.
 // - Comandos: 'u<valor>' umbral | 'd1' / 'd-1' direccion | help
-//   (1 = obstaculo si lectura > umbral, -1 = si lectura < umbral)
 // ============================================================
 #define PIN_IR 0
 #define N_MUESTRAS 10
 
-int umbral = 2500;
-int dir = 1;
+int umbral = 3800;  // default sensible: < 3800 ya es obstaculo
+int dir = -1;       // sensor pull-up: obstaculo si lectura < umbral
 
 void setup() {
   Serial.begin(115200);

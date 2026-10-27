@@ -2,7 +2,7 @@
 // BLIND SPOT - FIRMWARE MUÑECA (ESP32-C3 Super Mini)
 // Estilo BalancinCyS: BLE (NimBLE NUS) + interprete de comandos.
 //
-// - Pulsador en GPIO3 (INPUT_PULLDOWN, boton entre 3V3 y GPIO3):
+// - Pulsador en GPIO3 (INPUT_PULLUP, boton entre GPIO3 y GND):
 //   al presionarlo envia por ESP-NOW "btn" al baston, que activa
 //   su buzzer (localizador del baston).
 // - Transistor en GPIO10 -> motor vibrador: vibra cuando el
@@ -24,7 +24,7 @@
 // ==================================================
 // == PINES (ESP32-C3 Super Mini) ==
 // ==================================================
-#define PIN_BOTON 3    // pulsador a 3V3, pulldown interno
+#define PIN_BOTON 3    // pulsador a GND, pullup interno
 #define PIN_VIB   10   // transistor -> motor vibrador
 
 // Broadcast: funciona sin conocer la MAC del baston (alcanza con
@@ -174,9 +174,9 @@ void setup() {
 
   // Salidas / entradas
   pinMode(PIN_VIB, OUTPUT);
-  digitalWrite(PIN_VIB, LOW);
   analogWriteResolution(PIN_VIB, 8);
-  pinMode(PIN_BOTON, INPUT_PULLDOWN);
+  analogWrite(PIN_VIB, 0);
+  pinMode(PIN_BOTON, INPUT_PULLUP);
 
   Serial.printf("MAC (para el peer del baston): %s\n", WiFi.macAddress().c_str());
   Serial.println("Setup completo. Escribir 'help' por BLE o Serial.");
@@ -217,15 +217,15 @@ void loop() {
     btPrintln("RX baston: claro");
   }
 
-  // C. Pulsador (debounce 50 ms; presionado = HIGH por el pulldown)
-  static bool btnEstable = LOW;
+  // C. Pulsador (debounce 50 ms; presionado = LOW por el pullup)
+  static bool btnEstable = HIGH;
   static unsigned long btnT = 0;
   bool lec = digitalRead(PIN_BOTON);
   if (lec != btnEstable) {
     if (millis() - btnT > 50) {
       btnEstable = lec;
       btnT = millis();
-      if (lec == HIGH) {
+      if (lec == LOW) {
         btPrintln("BOTON presionado -> envio 'btn' al baston");
         enviar("btn", 0);
         vibrar(1);  // confirmacion local
@@ -276,15 +276,14 @@ void vibrar(int veces) {
   vibRestantes = veces;
   vibEstado = VIB_ON;
   vibT0 = millis();
-  if (pwmVib >= 255) digitalWrite(PIN_VIB, HIGH);
-  else analogWrite(PIN_VIB, pwmVib);
+  analogWrite(PIN_VIB, pwmVib);
 }
 
 void vibLoop() {
   if (vibEstado == VIB_IDLE) return;
   unsigned long now = millis();
   if (vibEstado == VIB_ON && now - vibT0 >= (unsigned long)pulso) {
-    digitalWrite(PIN_VIB, LOW);
+    analogWrite(PIN_VIB, 0);
     vibRestantes--;
     if (vibRestantes <= 0) {
       vibEstado = VIB_IDLE;
@@ -295,8 +294,7 @@ void vibLoop() {
   } else if (vibEstado == VIB_OFF_WAIT && now - vibT0 >= (unsigned long)pausa) {
     vibEstado = VIB_ON;
     vibT0 = now;
-    if (pwmVib >= 255) digitalWrite(PIN_VIB, HIGH);
-    else analogWrite(PIN_VIB, pwmVib);
+    analogWrite(PIN_VIB, pwmVib);
   }
 }
 
